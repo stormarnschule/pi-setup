@@ -1,0 +1,107 @@
+#!/bin/bash
+
+#
+#	Autor: Jesse Stricker <me@jessestricker.de>
+#	Datum: 07.09.2015
+#	Version: 1.2
+#
+#	Diese Datei kompiliert C++ Dateien in binäre, ausführbare Programme für Linux-Systeme und
+#	startet diese, sofern keine Fehler beim Kompilieren vorgefallen sind.
+#
+#	Es nutzt die C++11 Standard-Bibliotheken und linkt die GPIO C++ Api, damit es sich für
+#	den Raspberry Pi besonders eignet.
+#
+#	Des Weiteren führt dieses Script eine Hash-Abfrage durch, ob sich die Quelldatei geändert hat,
+#	erst dann wird kompiliert. Dies dient dazu, mehrmaliges Kompilieren ohne Quelländerung zu
+#	vermeiden um Zeit zu sparen.
+#	Falls keine Änderung erkannt worden sind, wird die alte Executable ausgeführt.
+#
+#	Diese Abfrage kann mit dem Flag "-f" unterdrückt werden. In diesem Fall wird immer kompiliert.
+#
+#	CHANGELOG
+#	v1.1 ----------------
+#	  - Hash-Abfrage hinzugefügt
+#
+#	v1.2 ----------------
+#	  - Benutze eigene GPIO C++ API anstelle von WiringPi
+#
+
+function usage() {
+	echo
+	echo "Benutzung: run SOURCE [-f]"
+	echo
+	echo "SOURCE: Muss eine Datei mit der Endung .cpp sein und gültigen C++ Code enthalten, um kompiliert werden zu können."
+	echo "    -f: (optional) Gibt an, dass jedenfalls neu kompiliert, auch wenn eine ausführbare Datei bereits vorhanden ist."
+}
+
+function hline() {
+	printf '%*s\n' "${COLUMNS:-$(tput cols)}" '' | tr ' ' -
+}
+
+# check cmd line args
+if [ $# -lt 1 ]; then
+	echo "FEHLER: Bitte gib deine .cpp Datei an!"
+	usage
+
+fi
+
+# get absolute path to source
+SOURCE=$(readlink -m $1)
+
+# check for file extension and wheter it actually exists
+if [[ $SOURCE != *.cpp ]] || ! [ -f "$SOURCE" ]; then
+	echo "FEHLER: Bitte gib den Pfad zu einer .cpp Datei an!"
+	usage
+	exit
+fi
+
+# build bin path and create
+SOURCE_DIR=$(dirname "$SOURCE")
+BIN_DIR="$SOURCE_DIR/bin"
+mkdir -p "$BIN_DIR"
+
+# build executable and hash path
+EXE="$BIN_DIR/$(basename "${SOURCE%.cpp}")"
+HASH_FILE="$EXE.md5"
+
+#
+# check hash value
+#
+
+# load old hash from file, if it exists
+if [ -f "$HASH_FILE" ]; then
+	OLD_HASH=$(cat "$HASH_FILE")
+fi
+# compute new hash
+NEW_HASH=($(md5sum "$SOURCE")[0])
+
+# compare hash values
+COMPILE=false
+if [ "$OLD_HASH" != "$NEW_HASH" ]; then
+	COMPILE=true
+	echo "Inhalt der .cpp Datei hat sich geändert,"
+fi
+
+# check if user wants to enforce compiling, or an executable does not exist
+if [ $COMPILE == true ] || ([ $# -gt 1 ] && [ "$2" == "-f" ]) || ! [ -f "$EXE" ]; then
+	echo "Kompiliere mit C++ $SOURCE -> $EXE"
+
+	# compile and check return value
+	g++ "$SOURCE" -Wall -o "$EXE" -lgpio -lpcd8544 --std=c++0x
+	if [ $? -ne 0 ]; then
+		echo "FEHLER: Die Datei konnte nicht kompiliert werden!"
+		exit 1
+	fi
+
+	# write hash
+	echo $NEW_HASH > "$HASH_FILE"
+
+	echo
+	echo "Starte neue ausführbare Datei"
+else
+	echo "Starte alte ausführbare Datei erneut"
+fi
+
+# run file
+hline
+sudo "$EXE"
